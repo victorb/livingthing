@@ -420,9 +420,10 @@
     "/favicon.ico" {:status 404}
     "/ws" (ws-handler req)
     "/source" {:status 200
-               :body (-> (meta #'http-handler)
-                         :file
-                         slurp)}
+               :body (->> (meta #'http-handler)
+                          :file
+                          (str "./src/")
+                          slurp)}
     "/app-state" (pprint-handler @app-state)
     "/vars" (pprint-handler (keys (ns-publics 'livingthing.core)))))
 
