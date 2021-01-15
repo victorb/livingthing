@@ -227,10 +227,12 @@
 (defn $command-list []
   [:div
    ($section-header "Executed commands (latest first):")
-   (map
-     $command-list-item
-     (reverse
-       (:executed-commands @app-state)))])
+   [:div
+     {:style "max-height: 500px; overflow: scroll;"}
+     (map
+       $command-list-item
+       (reverse
+         (:executed-commands @app-state)))]])
 
 ;; Figures out if the ID behind this request already voted or not
 (defn has-voted? [req]
@@ -339,6 +341,11 @@
 
 (defn $wrapper [req]
   [:div#wrapper
+   [:h1
+    "LivingThing.club"
+    [:span
+     {:style "color: grey; font-size: 14px;"}
+     " aka \"Humanity Codes Clojure\""]]
    [:h2
     "Current server time: "
     (:current-time @app-state)

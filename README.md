@@ -20,6 +20,10 @@ Have leiningen installed. Run `lein repl`. Inside the REPL, execute `(-main)`
 ```
 
 ```
+(def max-size 700)
+```
+
+```
 (defn $command-list-item [{:keys [execution-results
                                   executed-at from
                                   cmd from votes]}]
@@ -36,18 +40,26 @@ Have leiningen installed. Run `lein repl`. Inside the REPL, execute `(-main)`
 ```
 
 ```
-(defn $wrapper []
+(defn $wrapper [req]
   [:div#wrapper
+   [:h1
+    "LivingThing.club"
+    [:span
+     {:style "color: grey; font-size: 14px;"}
+     " aka \"Humanity Codes Clojure\""]]
    [:h2
     "Current server time: "
-    (-> @app-state :current-time (unix-epoch-to-human))]
-   ($pending-vote-list)
-   ($submit-command)
+    (unix-epoch-to-human (:current-time @app-state))
+    " (round " (:current-round @app-state) ")"]
    [:div
+    {:style "width: 50%; float: left;"}
     ($section-header "How LivingThing works")
     [:div
      {:style "font-family: serif; max-width: 700px;"}
-     intro-message]]
-   ($pending-list)
-   ($command-list)])
+     ($intro-message)]]
+   [:div
+     {:style "width: 50%; float: right;"}
+     ($pending-vote-list req)
+     ($submit-command)
+     ($command-list)]])
 ```
