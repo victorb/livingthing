@@ -8,7 +8,8 @@
                  [http-kit "2.5.0"]
                  [hiccup "1.0.5"]
                  [ring/ring-core "1.8.2"]
-                 [pandect "0.6.1"]]
+                 [pandect "0.6.1"]
+                 [venantius/glow "0.1.6"]]
   :main ^:skip-aot livingthing.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all

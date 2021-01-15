@@ -6,7 +6,8 @@
     [hiccup.page :as hiccup-page]
     [ring.middleware.params :refer [wrap-params]]
     [pandect.algo.sha1 :refer [sha1]]
-    [clojure.pprint :refer [pprint]])
+    [clojure.pprint :refer [pprint]]
+    [glow.core :refer [highlight-html generate-css]])
   (:import java.security.SecureRandom)
   (:gen-class))
 
@@ -49,6 +50,8 @@
 (defonce app-state
   (atom {;; unix timestamp (server) with current time
          :current-time nil
+         ;; Which round we're at. One round = one execution
+         :current-round 1
          ;; Commands that can be elected this round
          ;; key = :user
          ;; value = :command
@@ -134,7 +137,7 @@
 ;; as clojure code. Don't ever do this in production kids. If you do,
 ;; ensure you don't pass user-provided input into it. If you end up having
 ;; to pass user-provided input into it, make sure you have some voting system
-;; around it, because people are nice.
+;; around it, because people are nice, surely.
 (defn evaluate-string
   [s]
   (try
@@ -155,6 +158,7 @@
            {:executed-at (:current-time @app-state)
             :execution-results (str (evaluate-string cmd))}
            winner))
+  (swap! app-state update :current-round inc)
   (reset-pending-round!))
 
 ;; Checks if the current time is a time where we need to select a winner.
@@ -202,7 +206,8 @@
 
 (defn $link [title url]
   [:a
-   {:href url}
+   {:target "_blank"
+    :href url}
    title])
 
 (defn $command-list-item [{:keys [execution-results
@@ -227,7 +232,14 @@
      (reverse
        (:executed-commands @app-state)))])
 
-(defn $pending-vote-list []
+;; Figures out if the ID behind this request already voted or not
+(defn has-voted? [req]
+  (let [ip (:remote-addr req)
+        id (hash-str ip)]
+    (boolean
+        (get-in @app-state [:pending-votes id]))))
+
+(defn $pending-vote-list [req]
   [:div
    ($section-header "Current Vote Tally:")
    (map
@@ -239,12 +251,21 @@
          cmd]
         [:div
           [:small
-           "From " from]]])
+           "From " from]]
+        (when-not (has-voted? req)
+          [:a
+           {:href (str "/vote?id=" from)}
+           "Vote for this command"])])
      (:current-tally @app-state))])
 
 (defn $submit-command []
   [:div
    ($section-header "Submit new command:")
+   [:small
+    {:style "max-width: 450px; display: block; text-align: justify;"}
+    "Infinite loops would break it, so would removing vars we need to
+     show the UI. Commands sent here _will_ be executed in the production
+     repl if voted for, so try to not to submit shitty code"]
    [:form
      {:action "/submit-command"
       :method "post"}
@@ -276,8 +297,11 @@
 (def handy-links
   [["My Initial Source" "/source"]
    ["GitHub" "https://github.com/victorb/livingthing"]
+   ["Community Forum" "https://github.com/victorb/livingthing/discussions"]
    ["Current Vars" "/vars"]
-   ["App-State" "/app-state"]])
+   ["App-State" "/app-state"]
+   ["Community ClojureDocs" "https://clojuredocs.org/clojure.core/def"]
+   ["Clojure Reference" "https://clojure.org/api/cheatsheet"]])
 
 (defn $links []
   [:div
@@ -285,14 +309,8 @@
     [:ul
       (map (fn [[text url]] [:li ($link text url)]) handy-links)]])
 
-(def intro-message
-  "Think of this as a little game in collaboration between any human who has access to the internet. LivingThing is a running computer program that is accepting commands, created and voted by you and others, on a periodic schedule. Your IP gets masked and used to prevent cheating, otherwise
-  you can change anything in the program. Remove the IP checks maybe? Who knows, it's all up to you. Now be nice and let's see for how long we can
-  keep it running.
-  
-  The way the game works, is that ")
-
-(def intro-message
+;; A little intro message to describe what this is all about
+(defn $intro-message []
   [:div
    [:div "This is a once-in-a-lifetime REPL. Keep it alive, but do improve it. We're all in the same REPL."]
    [:div "How it works:"]
@@ -306,7 +324,8 @@
     [:li "In the rest of the time, anyone can create new commands and vote for which command they want to execute"]
     [:li "You can only vote once per hour, per IP. IPs are kept in memory from process startup and are hashed with a random salt generated on process startup. "
      ($link "See my running source (hint: search for \"/source\")" "/source")]
-    [:li "You can not undo your vote. Maybe this shall be the first attempted change?"]]
+    [:li "You can not undo your vote. Maybe this shall be the first attempted change?"]
+    [:li "Server time should update once a second, if it doesn't, something went wrong"]]
    [:div "Server at launch supports:"]
    [:ul
     [:li "Running a HTTP server that serves HTML pages"]
@@ -318,35 +337,41 @@
    [:div
     ($links)]])
 
-(defn $wrapper []
+(defn $wrapper [req]
   [:div#wrapper
    [:h2
     "Current server time: "
-    (:current-time @app-state)]
-   ($pending-vote-list)
-   ($submit-command)
+    (:current-time @app-state)
+    " (round " (:current-round @app-state) ")"]
    [:div
+    {:style "width: 50%; float: left;"}
     ($section-header "How LivingThing works")
     [:div
      {:style "font-family: serif; max-width: 700px;"}
-     intro-message]]
-   ($command-list)])
+     ($intro-message)]]
+   [:div
+     {:style "width: 50%; float: right;"}
+     ($pending-vote-list req)
+     ($submit-command)
+     ($command-list)]])
 
 ;; Little handy script that connects to our WS endpoint and reloads the page
 ;; on any message. Messages get sent when app-state has relevant changes
 (def js-reload-on-change
-  "(new WebSocket('ws://localhost:3825/ws')).addEventListener('message', () => window.location.reload());")
+  "(new WebSocket('ws://'+window.location.host+'/ws')).addEventListener('message', () => window.location.reload());")
 
-(defn http-index-page []
+;; Wrapper that takes our hiccup elements and renders them to HTML
+(defn http-index-page [req]
   {:body (hiccup/html
            (hiccup-page/html5
              [:head
+              [:title "LivingThing.club"]
               [:style
                stylesheet]
               [:script
                js-reload-on-change]]
              [:body
-              ($wrapper)]))})
+              ($wrapper req)]))})
 
 ;; Adds a command to the list of pending commands. Rejects the addition if
 ;; either the size (characters) is too big, or if the user already submitted
@@ -365,6 +390,8 @@
            :headers {"Location" "/"}})))))
 
 ;; Performs a vote for a user for this current round
+;; Checks if the vote is for/from it's owner and also if that IP already
+;; voted before
 (defn http-vote [req]
   (let [ip (:remote-addr req)
         id (hash-str ip)
@@ -380,7 +407,7 @@
            :headers {"Location" "/"}})))))
 
 ;; Shorthand for a ring-handler that outputs something via
-;; with-out-str and pprint
+;; with-out-str and pprint. Used for the /vars path
 (defn pprint-handler [data]
   {:status 200
    :body (with-out-str (pprint data))})
@@ -388,18 +415,18 @@
 ;; Keeps track of current open WS channels
 (defonce open-ws-channels (atom #{}))
 
-;; Watcher that gets called every time app-state changes
-;; Ignores any changes to :current-time as otherwise it'll change every second
-;; Sends `true` to the WS channel on every non-current-time change
+;; Atom watcher that gets called every time app-state changes
+;; Only checks for changes in :current-tally, so max updates are once per second
+;; Sends `true` to the WS channel on every change
 ;; Clients react by reloading the page when this happens
 (add-watch app-state :ws-watcher
   (fn [key atom old-state new-state]
-    (when-not (= (dissoc old-state :current-time)
-                 (dissoc new-state :current-time))
+    (when-not (= (:current-tally old-state)
+                 (:current-tally new-state))
       (doseq [ws-channel @open-ws-channels]
         (httpkit/send! ws-channel (prn-str true))))))
 
-;; Handler for any WS connections, duh
+;; Handler for WS connections, duh
 (defn ws-handler [req]
   (httpkit/as-channel req
     {:on-close
@@ -411,25 +438,48 @@
        (println "on-open:" ch)
        (swap! open-ws-channels conj ch))}))
 
+;; This HTTP handler takes the file location of itself, loads the file
+;; and adds syntax highlightning. Useful to be able to see the initial source
+;; of the current runtime
+(defn source-handler []
+  (let [file-path (:file (meta #'source-handler))
+        file-path (if (= (first file-path) \/)
+                    file-path
+                    (str "./src/" file-path))
+        source-code (slurp file-path)]
+    {:body (hiccup/html
+             (hiccup-page/html5
+               [:head
+                [:style
+                 "body, html {margin: 0; padding: 0; font-size: 18px;}
+                  pre {margin: 0;}"
+                 (generate-css)]]
+               [:body
+                (highlight-html source-code)]))}))
+
+;; As generate-css and/or highlight-html is not the fastest of functions,
+;; we trade memory usage for process usage, and cache the results of the first
+;; call to source-handler indefinitly
+;; First call: ~0,161 seconds, after that: ~0,018 seconds
+(def memoized-source-handler (memoize source-handler))
+
 ;; routing function for our http server
 (defn http-handler [req]
   (condp = (:uri req)
-    "/" (http-index-page)
-    "/submit-command" (http-submit-command req) 
+    "/" (http-index-page req)
+    "/submit-command" (http-submit-command req)
     "/vote" (http-vote req)
     "/favicon.ico" {:status 404}
     "/ws" (ws-handler req)
-    "/source" {:status 200
-               :body (->> (meta #'http-handler)
-                          :file
-                          (str "./src/")
-                          slurp)}
+    "/source" (memoized-source-handler)
     "/app-state" (pprint-handler @app-state)
-    "/vars" (pprint-handler (keys (ns-publics 'livingthing.core)))))
+    "/vars" (pprint-handler (vals (ns-publics 'livingthing.core)))))
 
 ;; Keep track of server-socket so we can close it if we want to.
 (def server-socket (atom nil))
 
+;; When deployed, we build this into a uberjar and execute it with java -jar
+;; This is the function that gets called when running the jar
 (defn -main [& args]
   (reset! server-socket
           (httpkit/run-server
